@@ -81,6 +81,21 @@ class TestCreateUser:
             resp = client.post(_BASE, json={**_VALID_PAYLOAD, "skills": []})
         assert resp.status_code == 201
 
+    def test_only_required_fields_accepted(self, client) -> None:
+        with patch.object(UserProfileController, "create", return_value=_mock_user()):
+            resp = client.post(_BASE, json={"name": "Bob", "email": "bob@example.com"})
+        assert resp.status_code == 201
+
+    def test_zero_experience_years_accepted(self, client) -> None:
+        with patch.object(UserProfileController, "create", return_value=_mock_user(experience_years=0)):
+            resp = client.post(_BASE, json={**_VALID_PAYLOAD, "experience_years": 0})
+        assert resp.status_code == 201
+
+    def test_negative_experience_years_accepted(self, client) -> None:
+        with patch.object(UserProfileController, "create", return_value=_mock_user(experience_years=-1)):
+            resp = client.post(_BASE, json={**_VALID_PAYLOAD, "experience_years": -1})
+        assert resp.status_code == 201
+
 
 class TestGetUser:
     def test_success_returns_200(self, client) -> None:

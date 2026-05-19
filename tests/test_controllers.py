@@ -182,3 +182,19 @@ class TestRecommendationController:
              patch.object(JobDB, "get_active_jobs", return_value=[bad_job, good_job]):
             result = RecommendationController(self.mock_db).get_recommendations(user.id)
         assert result.ranked_jobs[0].score >= result.ranked_jobs[1].score
+
+    def test_all_ranked_scores_between_zero_and_one(self) -> None:
+        user = _mock_user()
+        jobs = [_mock_job() for _ in range(4)]
+        with patch.object(UserProfileDB, "get_by_id", return_value=user), \
+             patch.object(JobDB, "get_active_jobs", return_value=jobs):
+            result = RecommendationController(self.mock_db).get_recommendations(user.id)
+        for ranked in result.ranked_jobs:
+            assert 0.0 <= ranked.score <= 1.0
+
+    def test_each_ranked_job_has_five_match_reasons(self) -> None:
+        user = _mock_user()
+        with patch.object(UserProfileDB, "get_by_id", return_value=user), \
+             patch.object(JobDB, "get_active_jobs", return_value=[_mock_job()]):
+            result = RecommendationController(self.mock_db).get_recommendations(user.id)
+        assert len(result.ranked_jobs[0].match_reasons) == 5

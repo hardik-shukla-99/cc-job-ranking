@@ -6,14 +6,16 @@ import pytest
 
 from app.db.models.job import JobModel
 from app.db.models.user_profile import UserProfileModel
-from app.ranker import (
+from app.db.services.ranking import (
+    RankingService,
     _experience_score,
     _location_score,
     _role_score,
     _salary_score,
     _skills_score,
-    rank_jobs,
 )
+
+rank_jobs = RankingService().rank_jobs
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -89,6 +91,11 @@ class TestSkillsScore:
     def test_empty_user_skills_returns_zero(self) -> None:
         score, _ = _skills_score([], ["python", "fastapi"])
         assert score == 0.0
+
+    def test_both_skills_empty_returns_one(self) -> None:
+        score, reason = _skills_score([], [])
+        assert score == 1.0
+        assert "No specific skills required" in reason
 
 
 # ── _role_score ───────────────────────────────────────────────────────────────
@@ -272,3 +279,73 @@ class TestRankJobs:
         user = _user(skills=[])
         ranked = rank_jobs(user, [_job(required_skills=["python", "fastapi"])])
         assert any("0/" in r for r in ranked[0].match_reasons)
+
+    def test_tied_jobs_all_appear_in_results(self) -> None:
+        user = _user()
+        jobs = [_job() for _ in range(3)]
+        ranked = rank_jobs(user, jobs)
+        assert len(ranked) == 3
+
+    def test_perfect_match_score_is_one(self) -> None:
+        # All 5 dimensions score 1.0: full skills overlap, role match,
+        # experience ok, remote ok, salary met.
+        user = _user(
+            skills=["python", "fastapi"],
+            preferred_roles=["backend engineer"],
+            experience_years=4,
+            location="San Francisco",
+            remote_ok=True,
+            salary_min=120000,
+        )
+        job = _job(
+            title="Backend Engineer",
+            required_skills=["python", "fastapi"],
+            experience_min=3,
+            remote=True,
+            salary=150000,
+        )
+        ranked = rank_jobs(user, [job])
+        assert ranked[0].score == 1.0
+
+    def test_zero_match_score_is_zero(self) -> None:
+        # All 5 dimensions score 0.0: no skills, wrong role,
+        # under-experienced, location mismatch, salary too low.
+        user = _user(
+            skills=["java"],
+            preferred_roles=["frontend engineer"],
+            experience_years=1,
+            location="New York",
+            remote_ok=False,
+            salary_min=200000,
+        )
+        job = _job(
+            title="Backend Engineer",
+            required_skills=["python"],
+            experience_min=5,
+            remote=False,
+            location="San Francisco",
+            salary=100000,
+        )
+        ranked = rank_jobs(user, [job])
+        assert ranked[0].score == 0.0
+
+    def test_partial_skills_match_gives_correct_weighted_score(self) -> None:
+        # Skills: 2/3 matched (0.667) → 0.667 * 0.45 = 0.300
+        # All other dimensions are 1.0 → 0.20 + 0.15 + 0.10 + 0.10 = 0.55
+        # Total: 0.85
+        user = _user(
+            skills=["python", "fastapi", "postgresql"],
+            preferred_roles=["backend engineer"],
+            experience_years=4,
+            remote_ok=True,
+            salary_min=120000,
+        )
+        job = _job(
+            title="Backend Engineer",
+            required_skills=["python", "fastapi", "rust"],
+            experience_min=3,
+            remote=True,
+            salary=150000,
+        )
+        ranked = rank_jobs(user, [job])
+        assert ranked[0].score == pytest.approx(0.85, abs=1e-4)

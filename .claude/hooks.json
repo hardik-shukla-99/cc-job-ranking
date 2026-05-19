@@ -1,0 +1,125 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "description": "Destructive bash command guard",
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json\ndata = json.load(sys.stdin)\ncmd = data.get('tool_input', {}).get('command', '').lower()\npatterns = ['rm -rf', 'drop table', 'truncate table', 'delete from', 'reset --hard', 'push --force', 'clean -f']\nfor p in patterns:\n    if p in cmd:\n        print(f'[hook] WARNING: destructive pattern detected: \\\"{p}\\\" — confirm before proceeding', file=sys.stderr)\n        break\n\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "description": "Migration file write guard",
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nif 'migrations/versions/' in path:\n    print('[hook] WARNING: editing an Alembic migration directly.', file=sys.stderr)\n    print('[hook] Prefer: poetry run alembic revision --autogenerate -m \\\"<message>\\\"', file=sys.stderr)\n\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "description": ".env file write guard",
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, os\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nif os.path.basename(path) == '.env':\n    print('[hook] WARNING: writing to .env — ensure no secrets are committed to git.', file=sys.stderr)\n\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "description": ".env file read guard",
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, os\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nif os.path.basename(path) == '.env':\n    print('[hook] WARNING: reading .env — this file may contain secrets. Do not log or expose its contents.', file=sys.stderr)\n\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "description": "Auto-format Python files with black + isort after write/edit",
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, subprocess\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nif path and path.endswith('.py') and '__pycache__' not in path:\n    for tool in [['poetry', 'run', 'black', '--quiet', path], ['poetry', 'run', 'isort', '--quiet', path]]:\n        r = subprocess.run(tool, capture_output=True, text=True)\n        if r.returncode != 0:\n            print(f'[hook] {tool[2]}: {r.stderr.strip()}', file=sys.stderr)\n\"",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "description": "Detect print() statements left in production app code",
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, subprocess\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nif path and path.endswith('.py') and '/app/' in path and '/tests/' not in path:\n    r = subprocess.run(['grep', '-n', r'\\bprint(', path], capture_output=True, text=True)\n    if r.stdout.strip():\n        print(f'[hook] print() found in {path} — consider using the logger instead:', file=sys.stderr)\n        print(r.stdout.strip(), file=sys.stderr)\n\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "description": "Remind to generate a migration after model changes",
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nif path and 'app/db/models/' in path and path.endswith('.py'):\n    print(f'[hook] DB model changed: {path}', file=sys.stderr)\n    print('[hook] If schema changed run: poetry run alembic revision --autogenerate -m \\\"<msg>\\\" && poetry run alembic upgrade head', file=sys.stderr)\n\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+
+    "SessionStart": [
+      {
+        "description": "Project context on session open",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[hook] === cc-job-ranking ===' && echo \"[hook] branch: $(git branch --show-current 2>/dev/null)\" && echo \"[hook] dirty files: $(git status --short 2>/dev/null | wc -l | tr -d ' ')\" && echo \"[hook] python: $(poetry run python --version 2>/dev/null)\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+
+    "Stop": [
+      {
+        "description": "Flake8 lint on modified Python files after Claude finishes",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport subprocess\nresult = subprocess.run(['git', 'diff', '--name-only', 'HEAD'], capture_output=True, text=True)\npy_files = [f for f in result.stdout.splitlines() if f.endswith('.py') and 'migrations' not in f]\nif py_files:\n    r = subprocess.run(['poetry', 'run', 'flake8', '--max-line-length=100'] + py_files, capture_output=True, text=True)\n    if r.stdout.strip():\n        print('[hook] flake8 issues on modified files:', file=sys.stderr)\n        print(r.stdout.strip(), file=sys.stderr)\n    else:\n        print(f'[hook] flake8 clean on {len(py_files)} modified file(s)', file=sys.stderr)\n\"",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      }
+    ],
+
+    "PreCompact": [
+      {
+        "description": "Capture session task state before compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"[hook] compacting context — branch: $(git branch --show-current) | staged: $(git diff --cached --name-only | wc -l | tr -d ' ') file(s)\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
