@@ -64,6 +64,21 @@ class TestCreateJob:
             resp = client.post(_BASE, json={**_VALID_PAYLOAD, "salary": 0})
         assert resp.status_code == 201
 
+    def test_only_required_fields_accepted(self, client) -> None:
+        with patch.object(JobController, "create", return_value=_mock_job()):
+            resp = client.post(_BASE, json={"title": "SWE", "company": "ACME"})
+        assert resp.status_code == 201
+
+    def test_negative_salary_accepted(self, client) -> None:
+        with patch.object(JobController, "create", return_value=_mock_job(salary=-1)):
+            resp = client.post(_BASE, json={**_VALID_PAYLOAD, "salary": -1})
+        assert resp.status_code == 201
+
+    def test_negative_experience_min_accepted(self, client) -> None:
+        with patch.object(JobController, "create", return_value=_mock_job(experience_min=-1)):
+            resp = client.post(_BASE, json={**_VALID_PAYLOAD, "experience_min": -1})
+        assert resp.status_code == 201
+
 
 class TestListJobs:
     def test_returns_200_with_list(self, client) -> None:
